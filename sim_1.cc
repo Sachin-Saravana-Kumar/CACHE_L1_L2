@@ -1,10 +1,8 @@
-#include <stdint.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
 #include "sim.h"
-//#include <math.h>
+#include <math.h>
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
@@ -12,35 +10,41 @@
 #include <sstream>
 #include <cstdint>
 #include <bitset>
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-class Cache{
-    public:
+
+class cache {
+public:
     int rows;
     int cols;
+    int L1_read_misses;
+    int L1_write_misses;
+    int L1_write_back;
+    int L2_read_demand;
+    int L2_read_misses;
+    int L2_write_misses;
+    int L2_write_back;
+    int L2_write;
+    int L2_read_hit;
+    int main_traf;
+    int blocksize;
+    int no_of_cache;
     uint32_t** data;
     int** LRU;
     bool** valid;
     bool** dirty;
-    int read;
-    int write;
-    int read_misses;
-    int write_misses;
-    int write_back;
-    int read_demand;
-    int main_traf;
-    int blocksize;
 
-    //virtual void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache) = 0;
-    //virtual void handleWriteback(uint32_t address) = 0;
-
-    Cache(int r, int c, int b) : rows(r), cols(c), blocksize(b) {
-        read_misses = 0;
-        write_misses = 0;
-        write_back = 0;
-        read = 0;
-        write = 0;
+    cache(int r, int c, int b) : rows(r), cols(c), blocksize(b) {
+        L1_read_misses = 0;
+        L1_write_misses = 0;
+        L1_write_back = 0;
+        L2_read_misses = 0;
+        L2_write_misses = 0;
+        L2_write = 0;
+        L2_write_back = 0;
+        L2_read_demand = 0;
+        L2_read_hit = 0;
         main_traf = 0;
-        read_demand=0;
         valid = new bool*[rows];
         dirty = new bool*[rows];
         LRU   = new int*[rows];
@@ -59,7 +63,7 @@ class Cache{
         }
     }
 
-    virtual ~Cache() {
+    ~cache() {
         for (int i = 0; i < rows; ++i) {
             delete[] data[i];
             delete[] valid[i];
@@ -73,106 +77,57 @@ class Cache{
 
     }
 
-
-    int LRU_value(uint32_t set){
-        for(int j = 0; j< cols; j++){    
-            if (LRU[set][j] == cols - 1) {
-                return j;  // Least recently used
-            }
-        }
-        return -1;
-    }
-
-    void LRU_update(bool hit,uint32_t set,int i){
-        int old_value;
-        //old_value = LRU[set][i];
-        old_value = LRU[set][i];
-        for (int j = 0; j < cols; j++) {
-            if(LRU[set][j] < old_value){
-                LRU[set][j]++;
-                
-            }   
-        }
-        LRU[set][i] = 0; // Most recently used
-        rearrange(set);
-    }
-
-    void rearrange(uint32_t set){
-
-        for(int j=0;j<cols;j++){
-            for(int i=0;i<cols;i++){
-            if(LRU[set][i] == j){
-            int d = data[set][i];
-            int l = LRU[set][i];
-            int dir = dirty[set][i];
-            data[set][i] = data[set][j];
-            data[set][j] = d;
-            LRU[set][i] = LRU[set][j];
-            LRU[set][j] = l;
-            dirty[set][i] = dirty[set][j];
-            dirty[set][j] = dir;}  
-            }
-            }
-    }
-    
-
-   void miss_count(const char rw){
-    if(rw == 'r'){
-        read_misses++;
-    }
-    else if (rw == 'w'){
-        write_misses++;
-    }
-}
-    void count_rw(const char rw){
-        if(rw == 'r'){
-            read++;
-        }
-        else if (rw =='w'){
-            write++;
-        }
-    }
-
-    virtual void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache,Cache* MainMemory)  {
-        bool hit = false;
-        int lru_index;
+    void getData(const uint32_t address,const char rw, cache& L2) {
         uint32_t set = set_add(address);
         uint32_t tag = tag_add(address);
-        count_rw(rw);
-        for (int j = 0; j < cols; j++) {
-            if (data[set][j] == tag) {
-                hit = true;
-                if (rw == 'w') {
-                    dirty[set][j] = 1;  // Mark block as dirty on write
-                }
-                data[set][j] = tag;
-                LRU_update(hit,set, j);
-                return;  // Cache hit
-            }
-        }
-        if(!hit){
-            miss_count(rw);
-            main_traf++;
-            lru_index = LRU_value(set);
-            if(dirty[set][lru_index]){
-                write_back++;
-                if (nextLevelCache) {
-                uint32_t oldaddress = find_address(data[set][lru_index],set);
-                nextLevelCache->Check_Cache(oldaddress,'w',MainMemory,nullptr); //handlewrite 
-            }
-                dirty[set][lru_index] = 0;
-            }
-            if(nextLevelCache){
-                nextLevelCache->Check_Cache(address, 'r',MainMemory,nullptr);}
-            }
 
-            data[set][lru_index] = tag;
-            if (rw == 'w') {
-                dirty[set][lru_index] = 1;  // Mark block as dirty on write
-                }
-            valid[set][lru_index] = true;
-            LRU_update(false,set,lru_index);
+        if (check_cache_hit(set, tag,rw, true)) {
+            //printf("l1 hit\n");
+        } 
+        else {
+            //printf("L1 miss\n");
+            
+            L2_read_demand++;
+
+            int placed = 0;
+
+            //int placed = handle_cache_miss(address,set, tag, rw,L2);
+            if(L2.check_cache_hit(L2.set_add(address),L2.tag_add(address),rw, false)){
+                L2_read_hit++;
+                placed = handle_cache_miss(set, tag, rw, true,L2);
+            }
+            else{
+                L2_read_misses++;  // Increment L2 read miss (demand) counter
+                main_traf++; 
+                int l2_placed = L2.handle_cache_miss(L2.set_add(address),L2.tag_add(address), rw, false,L2);
+                if(l2_placed){
+                    placed = handle_cache_miss(set, tag, rw, true,L2);
+                }   
+            }
         }
+    }
+
+    void display() const {
+        for (int i = 0; i < rows; ++i) {
+            printf("\n %d",i);
+            for (int j = 0; j < cols; ++j) {
+                printf(" %d %x %d ", LRU[i][j], data[i][j],dirty[i][j]);
+            }
+        }
+    }
+
+    void display1() const {
+        for (int i = 0; i < rows; ++i) {
+            printf("\n");
+            for (int j = 0; j < cols; ++j) {
+                printf("%x ", LRU[i][j]);
+            }
+        }
+    }
+
+
+
+private:
     uint32_t set_add(const uint32_t address) const {
         int no_index_bit  = log2(rows);
         int no_offset_bit = log2(blocksize);
@@ -186,59 +141,196 @@ class Cache{
         return address >> (no_offset_bit + no_index_bit); // Calculate tag.
     }
 
+    bool check_cache_hit(uint32_t set, uint32_t tag,const char rw,bool l1)  { //const
+        for (int j = 0; j < cols; j++) {
+            if (data[set][j] == tag) {
+                if(l1){
+                write(set,j,rw,tag);
+                }
+                LRU_miss_change(true,set,j);
+                return true; // Hit found.
+            }
+        }
+        return false; // No hit.
+    }
+
+    bool handle_cache_miss(uint32_t set, uint32_t tag, const char rw,bool l1,cache& L2) {
+        bool placed = false;
+        for (int j = 0; j < cols; j++) {
+            if (LRU_miss_no(set, j)) {
+                if(l1){
+                miss_count(rw);
+                writeback(set, tag, j,L2);
+                write(set,j,rw,tag); // write only at w cmd
+                }
+                else{
+                    if(dirty[set][j]== 1){
+                    L2.L2_write_back++;
+                    main_traf++;
+                    dirty[set][j] = 0;
+                    }
+                    //miss_count(rw);
+                }
+                
+                data[set][j] = tag; // Place tag in the Least recently used block
+                valid[set][j] = 1;
+                placed = true;
+                LRU_miss_change(false,set,j);
+                break;
+
+            }
+        }
+        return placed;
+        /*if (!placed) {
+            data[set][0] = tag; // Replace the first block if no empty slot was found.
+        }*/
+    }
+
+    bool LRU_miss_no(uint32_t set,int j){
+        return LRU[set][j] == (cols - 1);
+        
+    }
+
+
+    void LRU_miss_change(bool hit,uint32_t set,int i){
+        int old_value;
+        old_value = LRU[set][i];
+            for (int j = 0; j < cols; j++) {
+            if (LRU[set][j] < old_value) {
+                LRU[set][j]++;
+            }
+        }
+        LRU[set][i] = 0; // Most recently used
+
+
+        /*for(int j=0;j<cols;j++){
+            if(j == i){
+                LRU[set][j] = 0;
+            }
+            else{
+                LRU[set][j]++;
+            }
+        }
+        }
+        else{
+        old_value = LRU[set][i];
+        LRU[set][i] = 0;
+        for(int j=0;j<cols;j++){
+            if(j != i && LRU[set][j] < old_value){
+                LRU[set][j]++;
+            }
+        }
+        }*/
+       
+        for(int j=0;j<cols;j++){
+            for(int i=0;i<cols;i++){
+            if(LRU[set][i] == j){
+            int d = data[set][i];
+            int l = LRU[set][i];
+            int dir = dirty[set][i];
+            data[set][i] = data[set][j];
+            data[set][j] = d;
+            LRU[set][i] = LRU[set][j];
+            LRU[set][j] = l;
+            dirty[set][i] = dirty[set][j];
+            dirty[set][j] = dir;}  }}
+    }
+    
+    
+
+    void write(uint32_t set, int j,const char rw, uint32_t tag){
+        if(rw == 'w'){
+        dirty[set][j] = 1;}
+        else if(rw == 'r' && dirty[set][j] == 1 && data[set][j] == tag){
+        dirty[set][j] = 1;
+        }
+        else {
+        
+            dirty[set][j] = 0;
+        }
+    }
+
     uint32_t find_address(uint32_t oldTag, uint32_t set){
         uint32_t tag_set = (oldTag << static_cast<uint32_t>(log2(rows))) | set;
         uint32_t address = tag_set <<  static_cast<uint32_t>(log2(blocksize));
         return address;
     }
 
-    void display() const {
-        for (int i = 0; i < rows; ++i) {
-            printf("\n %d", i);
-            for (int j = 0; j < cols; ++j) {
-                printf(" %d %x %d ", LRU[i][j], data[i][j], dirty[i][j]);
+    void writeback(uint32_t set, uint32_t tag, int j,cache& L2){
+
+        if(dirty[set][j] == 1){
+        L1_write_back++;
+        L2_write++;
+        L2.handlewriteback(find_address(data[set][j], set));
+        dirty[set][j] = 0;
+        //printf("handlewriteback");
+        }
+    }
+
+    void handlewriteback(uint32_t address){
+        uint32_t set = set_add(address);
+        uint32_t tag = tag_add(address);
+        bool placed = false;
+
+        for (int j = 0; j < cols; j++){
+            if(data[set][j] == tag){
+            dirty[set][j] = true;
+            LRU_miss_change(true,set,j);
+            //printf("handlewriteback hit");
+            placed = true;
+            break;
+
+        }
+        }
+        if(!placed){
+            for (int j = 0; j < cols; j++){
+            if (LRU_miss_no(set, j)) {
+                L2_write_misses++;
+                main_traf++;
+                data[set][j] = tag; // Place tag in the Least recently used block
+                dirty[set][j] = 1;
+                LRU_miss_change(false,set,j);
+                //printf("handlewriteback miss");
+                valid[set][j] = 1;
+                placed = true;
+                break;
+
             }
         }
-        printf("\n");
+        //else{
 
-            printf("\n read : %d",read);
-            printf("\n write : %d",write);
-            printf("\n read misses, %d",read_misses);
-            printf("\n write misses, %d",write_misses);
-            printf("\n write back, %d",write_back);
-            
+        //}
     }
+}
 
-};
-
-class L1Cache : public Cache {
-public:
-    L1Cache(int r, int c, int b) : Cache(r, c, b) {}
-
-    // L1 specific behavior can be added here
-};
-
-// Derived class for L2 Cache
-class L2Cache : public Cache {
-public:
-    L2Cache(int r, int c, int b) : Cache(r, c, b) {}
-
-
-  
-};
-
-class MainMemory : public Cache {
-public:
-    MainMemory(int r, int c, int b) : Cache(r, c, b) {}
-
-    void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache, Cache* MainMemory) override {
-        main_traf++;
+void miss_count(const char rw){
+    if(rw == 'r'){
+        L1_read_misses++;
     }
-
+    else if (rw == 'w'){
+        L1_write_misses++;
+    }
+}
 };
+
+
+
+/*--------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*  "argc" holds the number of command-line arguments.
+    "argv[]" holds the arguments themselves.
+
+    Example:
+    ./sim 32 8192 4 262144 8 3 10 gcc_trace.txt
+    argc = 9
+    argv[0] = "./sim"
+    argv[1] = "32"
+    argv[2] = "8192"
+    ... and so on
+*/
+
 
 int main (int argc, char *argv[]) {
-   int l1_col, l2_col, read , write ,L1_no_sets, L2_no_sets, blocksize,L2_placed;
+   int l1_col, l2_col, read , write ,t1_no_sets, t2_no_sets, blocksize;
    FILE *fp;			// File pointer.
    char *trace_file;		// This variable holds the trace file name.
    cache_params_t params;	// Look at the sim.h header file for the definition of struct cache_params_t.
@@ -256,7 +348,7 @@ int main (int argc, char *argv[]) {
    // "atoi()" (included by <stdlib.h>) converts a string (char *) to an integer (int).
 
                                                                                                                                                                                                                                                                                                            
-   
+
    params.BLOCKSIZE = (uint32_t) atoi(argv[1]);
    params.L1_SIZE   = (uint32_t) atoi(argv[2]);
    params.L1_ASSOC  = (uint32_t) atoi(argv[3]);
@@ -265,6 +357,9 @@ int main (int argc, char *argv[]) {
    params.PREF_N    = (uint32_t) atoi(argv[6]);
    params.PREF_M    = (uint32_t) atoi(argv[7]);
    trace_file       = argv[8];
+
+
+   // Open the trace file for reading.
 
 
    fp = fopen(trace_file, "r");
@@ -287,45 +382,61 @@ int main (int argc, char *argv[]) {
    printf("trace_file: %s\n", trace_file);
    printf("\n");
 
-    L1_no_sets = params.L1_SIZE/((params.L1_ASSOC)*(params.BLOCKSIZE));
-    L2_no_sets=params.L2_SIZE/((params.L2_ASSOC)*(params.BLOCKSIZE));
+    t1_no_sets = params.L1_SIZE/((params.L1_ASSOC)*(params.BLOCKSIZE));
+    t2_no_sets=params.L2_SIZE/((params.L2_ASSOC)*(params.BLOCKSIZE));
     blocksize = params.BLOCKSIZE;
     
     l1_col=params.L1_ASSOC ;
     l2_col=params.L2_ASSOC ;
 
-    L1Cache L1(L1_no_sets,l1_col,blocksize);
-    MainMemory MM(1,1,blocksize);
+    cache L1(t1_no_sets,l1_col,blocksize);
+    cache L2(t2_no_sets,l2_col,blocksize);
+    read=0;
+    write=0;
+   // Read requests from the trace file and echo them back.
+   while (fscanf(fp, "%c %x\n", &rw, &addr) == 2) {	// Stay in the loop if fscanf() successfully parsed two tokens as specified.
+      if (rw == 'r'){
+        read++;
+         // printf("r %x\n", addr);
+         L1.getData(addr,rw,L2);
+         }
+      else if (rw == 'w'){
+        write++;
+         // printf("w %x\n", addr);
+         L1.getData(addr,rw,L2);
+         }
+      else {
+         printf("Error: Unknown request type %c.\n", rw);
+	 exit(EXIT_FAILURE);
+      }
+    }
 
-    if(l2_col == 0 && L2_no_sets == 0){
-    while (fscanf(fp, "%c %x\n", &rw, &addr) == 2) {	// Stay in the loop if fscanf() successfully parsed two tokens as specified.
-      if (rw == 'r' || rw == 'w'){
-         L1.Check_Cache(addr,rw,&MM,nullptr);}
-      else {
-         printf("Error: Unknown request type %c.\n", rw);
-	 exit(EXIT_FAILURE);
-      }
-    }
     L1.display();
-    }
-    else{
-    L2Cache L2(L2_no_sets,l2_col,blocksize);
-    L2_placed = true; 
-    while (fscanf(fp, "%c %x\n", &rw, &addr) == 2) {	// Stay in the loop if fscanf() successfully parsed two tokens as specified.
-      if (rw == 'r' || rw == 'w'){
-         L1.Check_Cache(addr,rw,&L2,&MM);}
-      else {
-         printf("Error: Unknown request type %c.\n", rw);
-	 exit(EXIT_FAILURE);
-      }
-    }
-    L1.display();
-    L2.display();
-    }
-    
     //L1.display1();
-    printf("\n main traf, %d",(MM.main_traf));
+
+    //printf("\nL1_L2_TRAFFIC, %d",L1.);
+    L2.display();
+    printf("read : %d",read);
+    printf("write : %d",write);
+    printf("\n L1 read misses, %d",L1.L1_read_misses);
+    printf("\n L1 write misses, %d",L1.L1_write_misses);
+    printf("\n L1 write back, %d",L1.L1_write_back);
+    printf("\n L2 read misses, %d",(L1.L2_read_misses+L2.L2_read_misses));
+    printf("\n L2 read demand, %d",L1.L2_read_demand);
+    printf("\n L2 read hit, %d",L1.L2_read_hit);
+    printf("\n L2 write demand, %d",L1.L2_write);
+    printf("\n L2 write misses, %d",L2.L2_write_misses);
+    printf("\n L2 write back, %d",(L2.L2_write_back));
+    printf("\n main traf, %d",(L2.main_traf+L1.main_traf));
+
     //L1.displaylru();
     //L2.displaylru();
     return(0);
 }
+
+/*
+r 1004bb18
+r 10048f96
+w 1000f972
+w 1004bb18
+w 1000f972*/
