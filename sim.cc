@@ -19,6 +19,9 @@ class Cache{
     int cols;
     uint32_t** data;
     int** LRU;
+    uint32_t** prefetch;
+    bool** prefetch_valid;
+    int* prefetch_LRU;
     bool** valid;
     bool** dirty;
     int read;
@@ -29,11 +32,14 @@ class Cache{
     int read_demand;
     int main_traf;
     int blocksize;
+    int no_of_stream;
+    int no_mem_stream;
+    int prefetches;
 
     //virtual void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache) = 0;
     //virtual void handleWriteback(uint32_t address) = 0;
 
-    Cache(int r, int c, int b) : rows(r), cols(c), blocksize(b) {
+    Cache(int r, int c, int b, int n, int m) : rows(r), cols(c), blocksize(b), no_of_stream(n), no_mem_stream(m) {
         read_misses = 0;
         write_misses = 0;
         write_back = 0;
@@ -41,10 +47,25 @@ class Cache{
         write = 0;
         main_traf = 0;
         read_demand=0;
+        prefetches = 0;
         valid = new bool*[rows];
         dirty = new bool*[rows];
         LRU   = new int*[rows];
         data = new uint32_t*[rows];
+        if(no_mem_stream > 0 && no_of_stream >0){
+        prefetch = new uint32_t*[no_of_stream];
+        prefetch_valid = new bool*[no_of_stream];
+        prefetch_LRU = new int[no_of_stream];
+        for(int i = 0; i < no_of_stream; ++i) {
+            prefetch[i] = new uint32_t[no_mem_stream];
+            prefetch_valid[i] = new bool[no_mem_stream];
+            prefetch_LRU[i] = i;
+            for(int j = 0; j < no_mem_stream ; ++j){
+                prefetch[i][j] = 0;
+                prefetch_valid[i][j] = 0;
+            }
+        }
+        }
         for (int i = 0; i < rows; ++i) {
             data[i] = new uint32_t[cols];
             valid[i] = new bool[cols];
@@ -60,6 +81,13 @@ class Cache{
     }
 
     virtual ~Cache() {
+        if(no_mem_stream  > 0 && no_of_stream >0){
+            for(int i = 0; i < no_of_stream; ++i) {
+            delete[] prefetch[i];
+            delete[] prefetch_valid[i];
+        }
+        delete[] prefetch;
+        delete[] prefetch_valid;}
         for (int i = 0; i < rows; ++i) {
             delete[] data[i];
             delete[] valid[i];
@@ -70,6 +98,7 @@ class Cache{
         delete[] valid;
         delete[] dirty;
         delete[] LRU;
+
 
     }
 
@@ -90,7 +119,6 @@ class Cache{
         for (int j = 0; j < cols; j++) {
             if(LRU[set][j] < old_value){
                 LRU[set][j]++;
-                
             }   
         }
         LRU[set][i] = 0; // Most recently used
@@ -110,7 +138,8 @@ class Cache{
             LRU[set][i] = LRU[set][j];
             LRU[set][j] = l;
             dirty[set][i] = dirty[set][j];
-            dirty[set][j] = dir;}  
+            dirty[set][j] = dir;
+            }  
             }
             }
     }
@@ -140,9 +169,9 @@ class Cache{
         uint32_t tag = tag_add(address);
         count_rw(rw);
         for (int j = 0; j < cols; j++) {
-            if (data[set][j] == tag) {
+            if (data[set][j] == tag){
                 hit = true;
-                if (rw == 'w') {
+                if (rw == 'w'){
                     dirty[set][j] = 1;  // Mark block as dirty on write
                 }
                 data[set][j] = tag;
@@ -187,9 +216,12 @@ class Cache{
     }
 
     uint32_t find_address(uint32_t oldTag, uint32_t set){
-        uint32_t tag_set = (oldTag << static_cast<uint32_t>(log2(rows))) | set;
-        uint32_t address = tag_set <<  static_cast<uint32_t>(log2(blocksize));
+        uint32_t tag_set = (oldTag << static_cast<int>(log2(rows))) | set;
+        uint32_t address = tag_set <<  static_cast<int>(log2(blocksize));
         return address;
+    }
+    uint32_t tag_set(const uint32_t address) const {
+        return address >> static_cast<int>(log2(blocksize)); // Calculate tag.
     }
 
     void display(const char* cacheName) const {
@@ -210,7 +242,64 @@ class Cache{
             }
         }
         printf("\n");
-            
+        if(no_mem_stream> 0 && no_of_stream > 0){
+        printf("\n===== Stream Buffer(s) contents =====\n");
+        for (int i = 0; i < no_of_stream; ++i) {
+            for (int j = 0; j < no_mem_stream; ++j) {
+                printf("%8x ",prefetch[i][j]);
+            }
+            //printf("\n");
+        }
+        printf("\n");
+        }   
+
+    }
+
+    bool update_prefetcher(uint32_t addr, bool hit, Cache*MainMemory){
+        int msu = 0;
+        bool placed = false;
+        //if(msu <= no_mem_stream) {
+            for(int i = 0; i < no_of_stream ; ++i){
+            for(int j = 0; j < no_mem_stream ; ++j){
+                if((addr == prefetch[i][j])){
+                    placed = true;
+                    MainMemory->main_traf = MainMemory->main_traf+j+1;
+                    prefetches = prefetches + j + 1;
+                        prefetch[i][0] = addr+1;
+                        prefetch_LRU_update(i);
+                        for(int k = 1; k < no_mem_stream ; ++k){
+                            prefetch[i][k] = addr + k +1;
+                           //printf("%d",prefetch[i][k]);
+                        }
+                        return true;
+                }
+                }
+            }
+
+            if(!hit && !placed){
+                for(int k = 0; k < no_of_stream; ++k){
+                    if(prefetch_LRU[k] == (no_of_stream - 1)){
+                        prefetch_LRU_update(k);
+                        for(int x = 0; x < no_mem_stream ; ++x){
+                            prefetch[k][x] = addr + x +1;
+                            MainMemory->main_traf++;
+                            prefetches++;
+                        }
+                    }
+                }
+                return false;
+            }
+            return false;
+            msu++;
+        } 
+
+    void prefetch_LRU_update(int i){
+        for (int j = 0; j < cols; j++) {
+            if(prefetch_LRU[j] < prefetch_LRU[i]){
+                prefetch_LRU[j]++;
+            }   
+        }
+        prefetch_LRU[i] = 0;
     }
 
     
@@ -219,15 +308,15 @@ class Cache{
     void printMeasurements(Cache* L1,Cache* L2,Cache* MM) {
         //double L2_missrate;
         //double L1_missrate =(L1->read_misses+L1->write_misses)/(L1->read+L1->write);
-        printf("\n");
+    printf("\n");
     printf("===== Measurements =====\n");
     printf("a. L1 reads:                   %d\n", L1->read);
     printf("b. L1 read misses:             %d\n", L1->read_misses);
     printf("c. L1 writes:                  %d\n", L1->write);
     printf("d. L1 write misses:            %d\n", L1->write_misses);
-    printf("e. L1 miss rate:               %.4f\n",(float)(L1->read_misses+L1->write_misses)/(L1->read+L1->write));
+    printf("e. L1 miss rate:               %.4f\n",(float)(L1->read_misses + L1->write_misses)/(L1->read + L1->write));
     printf("f. L1 writebacks:              %d\n", L1->write_back);
-    printf("g. L1 prefetches:              %d\n", 0);
+    printf("g. L1 prefetches:              %d\n", L1->prefetches);
     if(L2){
         //L2_missrate = (L2->read_misses/L2->read);
     printf("h. L2 reads (demand):          %d\n", L2->read);
@@ -257,23 +346,84 @@ class Cache{
 
 class L1Cache : public Cache {
 public:
-    L1Cache(int r, int c, int b) : Cache(r, c, b) {}
+    L1Cache(int r, int c, int b, int n, int m) : Cache(r, c, b, n, m) {}
 
-    // L1 specific behavior can be added here
+        void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache,Cache* MainMemory) override  {
+        bool hit = false;
+        bool pre_placed = false;
+        int lru_index;
+        uint32_t set = set_add(address);
+        uint32_t tag = tag_add(address);
+        count_rw(rw);
+        for (int j = 0; j < cols; j++) {
+            if (data[set][j] == tag) {
+                hit = true;
+                if(MainMemory == nullptr && no_mem_stream > 0 && no_of_stream > 0){
+                    pre_placed = update_prefetcher(tag_set(address) ,hit,nextLevelCache);
+                }
+                if (rw == 'w') {
+                    dirty[set][j] = 1;  // Mark block as dirty on write
+                }
+                data[set][j] = tag;
+                LRU_update(hit,set, j);
+                return;  // Cache hit
+            }
+        }
+
+        if(!hit){
+            
+            if(MainMemory == nullptr && no_mem_stream > 0 && no_of_stream > 0){
+                pre_placed = update_prefetcher(tag_set(address) ,false,nextLevelCache);
+                //printf("%d",pre_placed);
+            }
+
+            lru_index = LRU_value(set);
+            if(dirty[set][lru_index]){
+                write_back++;
+                if (nextLevelCache){
+                uint32_t oldaddress = find_address(data[set][lru_index],set);
+                nextLevelCache->Check_Cache(oldaddress,'w',MainMemory,nullptr); //handlewrite 
+            }
+                dirty[set][lru_index] = 0;
+            }
+
+            if(nextLevelCache && !pre_placed){
+                nextLevelCache->Check_Cache(address, 'r',MainMemory,nullptr);}
+            }
+
+            if(!pre_placed){
+                    miss_count(rw);
+            }
+
+            data[set][lru_index] = tag;
+            if (rw == 'w') {
+                dirty[set][lru_index] = 1;  // Mark block as dirty on write
+                }
+            valid[set][lru_index] = true;
+            LRU_update(false,set,lru_index);
+        }
+        
 };
 
-// Derived class for L2 Cache
+
 class L2Cache : public Cache {
 public:
-    L2Cache(int r, int c, int b) : Cache(r, c, b) {}
+    L2Cache(int r, int c, int b, int n, int m) : Cache(r, c, b, n,m) {}
 
 
-  
+
+};
+
+class prefetch : public Cache{
+public:
+    prefetch(int r, int c, int b, int n, int m) : Cache(r, c, b, n, m){}
+
+    
 };
 
 class MainMemory : public Cache {
 public:
-    MainMemory(int r, int c, int b) : Cache(r, c, b) {}
+    MainMemory(int r, int c, int b, int n, int m) : Cache(r, c, b, n, m) {}
 
     void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache, Cache* MainMemory) override {
         main_traf++;
@@ -284,7 +434,7 @@ public:
 };
 
 int main (int argc, char *argv[]) {
-   int l1_col, l2_col,L1_no_sets, L2_no_sets, blocksize;
+   int l1_col, l2_col,L1_no_sets, L2_no_sets, blocksize, no_of_stream, no_mem_stream;
    FILE *fp;			// File pointer.
    char *trace_file;		// This variable holds the trace file name.
    cache_params_t params;	// Look at the sim.h header file for the definition of struct cache_params_t.
@@ -301,8 +451,7 @@ int main (int argc, char *argv[]) {
     
    // "atoi()" (included by <stdlib.h>) converts a string (char *) to an integer (int).
 
-                                                                                                                                                                                                                                                                                                           
-   
+
    params.BLOCKSIZE = (uint32_t) atoi(argv[1]);
    params.L1_SIZE   = (uint32_t) atoi(argv[2]);
    params.L1_ASSOC  = (uint32_t) atoi(argv[3]);
@@ -338,17 +487,20 @@ int main (int argc, char *argv[]) {
     
     l1_col=params.L1_ASSOC ;
     l2_col=params.L2_ASSOC ;
+
+    no_mem_stream = params.PREF_M;
+    no_of_stream = params.PREF_N;
     
-    L1Cache L1(L1_no_sets,l1_col,blocksize);
-    MainMemory MM(1,1,blocksize);
-     
-    if(l2_col > 0 &&   params.L2_SIZE > 0){
+    L1Cache L1(L1_no_sets,l1_col,blocksize, no_of_stream, no_mem_stream);
+    MainMemory MM(1,1,blocksize,no_of_stream,no_mem_stream);
+    if(l2_col > 0 && params.L2_SIZE > 0){
     L2_no_sets=params.L2_SIZE/((params.L2_ASSOC)*(params.BLOCKSIZE));
-    L2Cache L2(L2_no_sets,l2_col,blocksize);   
+    L2Cache L2(L2_no_sets,l2_col,blocksize,no_of_stream,no_mem_stream);   
+
     while (fscanf(fp, "%c %x\n", &rw, &addr) == 2) {	// Stay in the loop if fscanf() successfully parsed two tokens as specified.
-      if (rw == 'r' || rw == 'w'){
-         L1.Check_Cache(addr,rw,&L2,&MM);}
-      else {
+      if (rw == 'r' || rw == 'w' ){
+         L1.Check_Cache(addr,rw,&L2,&MM);
+    }else {
          printf("Error: Unknown request type %c.\n", rw);
 	 exit(EXIT_FAILURE);
       }
@@ -371,11 +523,5 @@ int main (int argc, char *argv[]) {
     printMeasurements(&L1,nullptr,&MM); 
     }
     
-    
-    //L1.display1();
-    //printf("\n main traf, %d",(MM.main_traf));
-    //L1.displaylru();
-    //L2.displaylru();
     return(0);
 }
-
