@@ -162,7 +162,7 @@ class Cache{
         }
     }
 
-    virtual void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache,Cache* MainMemory)  {
+    /*virtual void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache,Cache* MainMemory)  {
         bool hit = false;
         int lru_index;
         uint32_t set = set_add(address);
@@ -201,154 +201,9 @@ class Cache{
                 }
             valid[set][lru_index] = true;
             LRU_update(false,set,lru_index);
-        }
-    uint32_t set_add(const uint32_t address) const {
-        int no_index_bit  = log2(rows);
-        int no_offset_bit = log2(blocksize);
-        int tag_index = address >> no_offset_bit;
-        return tag_index & ((1ULL << no_index_bit) - 1); // Calculate set.
-    }
+        }*/
 
-    uint32_t tag_add(const uint32_t address) const {
-        int no_index_bit = log2(rows);
-        int no_offset_bit = log2(blocksize);
-        return address >> (no_offset_bit + no_index_bit); // Calculate tag.
-    }
-
-    uint32_t find_address(uint32_t oldTag, uint32_t set){
-        uint32_t tag_set = (oldTag << static_cast<int>(log2(rows))) | set;
-        uint32_t address = tag_set <<  static_cast<int>(log2(blocksize));
-        return address;
-    }
-    uint32_t tag_set(const uint32_t address) const {
-        return address >> static_cast<int>(log2(blocksize)); // Calculate tag.
-    }
-
-    void display(const char* cacheName) const {
-        printf("===== %s contents =====",cacheName);
-
-        for (int i = 0; i < rows; ++i) {
-            printf("\nset     %2d: ", i);
-
-            for (int j = 0; j < cols; ++j) {
-                printf("  %8x",data[i][j]);
-
-                if(dirty[i][j]){
-                    printf(" D");
-                }
-                else{
-                    printf("  ");
-                }
-            }
-        }
-        printf("\n");
-        if(no_mem_stream> 0 && no_of_stream > 0){
-        printf("\n===== Stream Buffer(s) contents =====\n");
-        for (int i = 0; i < no_of_stream; ++i) {
-            for (int j = 0; j < no_mem_stream; ++j) {
-                printf("%8x ",prefetch[i][j]);
-            }
-            //printf("\n");
-        }
-        printf("\n");
-        }   
-
-    }
-
-    bool update_prefetcher(uint32_t addr, bool hit, Cache*MainMemory){
-        int msu = 0;
-        bool placed = false;
-        //if(msu <= no_mem_stream) {
-            for(int i = 0; i < no_of_stream ; ++i){
-            for(int j = 0; j < no_mem_stream ; ++j){
-                if((addr == prefetch[i][j])){
-                    placed = true;
-                    MainMemory->main_traf = MainMemory->main_traf+j+1;
-                    prefetches = prefetches + j + 1;
-                        prefetch[i][0] = addr+1;
-                        prefetch_LRU_update(i);
-                        for(int k = 1; k < no_mem_stream ; ++k){
-                            prefetch[i][k] = addr + k +1;
-                           //printf("%d",prefetch[i][k]);
-                        }
-                        return true;
-                }
-                }
-            }
-
-            if(!hit && !placed){
-                for(int k = 0; k < no_of_stream; ++k){
-                    if(prefetch_LRU[k] == (no_of_stream - 1)){
-                        prefetch_LRU_update(k);
-                        for(int x = 0; x < no_mem_stream ; ++x){
-                            prefetch[k][x] = addr + x +1;
-                            MainMemory->main_traf++;
-                            prefetches++;
-                        }
-                    }
-                }
-                return false;
-            }
-            return false;
-            msu++;
-        } 
-
-    void prefetch_LRU_update(int i){
-        for (int j = 0; j < cols; j++) {
-            if(prefetch_LRU[j] < prefetch_LRU[i]){
-                prefetch_LRU[j]++;
-            }   
-        }
-        prefetch_LRU[i] = 0;
-    }
-
-    
-};
-
-    void printMeasurements(Cache* L1,Cache* L2,Cache* MM) {
-        //double L2_missrate;
-        //double L1_missrate =(L1->read_misses+L1->write_misses)/(L1->read+L1->write);
-    printf("\n");
-    printf("===== Measurements =====\n");
-    printf("a. L1 reads:                   %d\n", L1->read);
-    printf("b. L1 read misses:             %d\n", L1->read_misses);
-    printf("c. L1 writes:                  %d\n", L1->write);
-    printf("d. L1 write misses:            %d\n", L1->write_misses);
-    printf("e. L1 miss rate:               %.4f\n",(float)(L1->read_misses + L1->write_misses)/(L1->read + L1->write));
-    printf("f. L1 writebacks:              %d\n", L1->write_back);
-    printf("g. L1 prefetches:              %d\n", L1->prefetches);
-    if(L2){
-        //L2_missrate = (L2->read_misses/L2->read);
-    printf("h. L2 reads (demand):          %d\n", L2->read);
-    printf("i. L2 read misses (demand):    %d\n", L2->read_misses);
-    printf("j. L2 reads (prefetch):        %d\n", 0);
-    printf("k. L2 read misses (prefetch):  %d\n", 0);
-    printf("l. L2 writes:                  %d\n", L2->write);
-    printf("m. L2 write misses:            %d\n", L2->write_misses);
-    printf("n. L2 miss rate:               %.4f\n",(float)(L2->read_misses)/(L2->read));
-    printf("o. L2 writebacks:              %d\n", L2->write_back);
-    printf("p. L2 prefetches:              %d\n", 0);}
-    else{
-    printf("h. L2 reads (demand):          %d\n", 0);
-    printf("i. L2 read misses (demand):    %d\n", 0);
-    printf("j. L2 reads (prefetch):        %d\n", 0);
-    printf("k. L2 read misses (prefetch):  %d\n", 0);
-    printf("l. L2 writes:                  %d\n", 0);
-    printf("m. L2 write misses:            %d\n", 0);
-    printf("n. L2 miss rate:               %.4f\n",0.000);
-    printf("o. L2 writebacks:              %d\n", 0);
-    printf("p. L2 prefetches:              %d\n", 0);
-    }
-    printf("q. memory traffic:             %d\n", MM->main_traf);
-}
-
-
-
-class L1Cache : public Cache {
-public:
-    L1Cache(int r, int c, int b, int n, int m) : Cache(r, c, b, n, m) {}
-
-        void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache,Cache* MainMemory) override  {
+       virtual void Check_Cache(uint32_t address, char rw, Cache* nextLevelCache,Cache* MainMemory) {
         bool hit = false;
         bool pre_placed = false;
         int lru_index;
@@ -402,6 +257,183 @@ public:
             valid[set][lru_index] = true;
             LRU_update(false,set,lru_index);
         }
+    
+    uint32_t set_add(const uint32_t address) const {
+        int no_index_bit  = log2(rows);
+        int no_offset_bit = log2(blocksize);
+        int tag_index = address >> no_offset_bit;
+        return tag_index & ((1ULL << no_index_bit) - 1); // Calculate set.
+    }
+
+    uint32_t tag_add(const uint32_t address) const {
+        int no_index_bit = log2(rows);
+        int no_offset_bit = log2(blocksize);
+        return address >> (no_offset_bit + no_index_bit); // Calculate tag.
+    }
+
+    uint32_t find_address(uint32_t oldTag, uint32_t set){
+        uint32_t tag_set = (oldTag << static_cast<int>(log2(rows))) | set;
+        uint32_t address = tag_set <<  static_cast<int>(log2(blocksize));
+        return address;
+    }
+    uint32_t tag_set(const uint32_t address) const {
+        return address >> static_cast<int>(log2(blocksize)); // Calculate tag.
+    }
+
+    void display(const char* cacheName) const {
+        printf("===== %s contents =====",cacheName);
+
+        for (int i = 0; i < rows; ++i) {
+            printf("\nset     %2d: ", i);
+
+            for (int j = 0; j < cols; ++j) {
+                printf("  %8x",data[i][j]);
+
+                if(dirty[i][j]){
+                    printf(" D");
+                }
+                else{
+                    printf("  ");
+                }
+            }
+        }
+        printf("\n");
+        if(no_mem_stream> 0 && no_of_stream > 0){
+        printf("\n===== Stream Buffer(s) contents =====\n");
+        for (int i = 0; i < no_of_stream; ++i) {
+            int MSU = findMsu(i);
+            if(MSU == -1 ){
+                printf("error");
+            }
+            for (int j = 0; j < no_mem_stream; ++j) {
+                printf("%8x ",prefetch[MSU][j]);
+            }
+            printf("\n");
+        }
+        }
+
+    }
+
+    bool ishit_prefetch(uint32_t addr, Cache*MainMemory){
+        
+        for(int i = 0; i < no_of_stream; ++i){
+            int MSU = findMsu(i);
+            if(MSU == -1 ){
+                printf("error");
+            }
+            for(int j = 0; j < no_mem_stream ; ++j){
+                if((addr == prefetch[MSU][j])){
+                    //placed = true;
+                    //printf(" hit ");
+                    MainMemory->main_traf = MainMemory->main_traf+j+1;
+                    prefetches = prefetches + j + 1;
+                        prefetch[MSU][0] = addr+1;
+                        //printf(" %d ",prefetch[MSU][0]);
+                        for(int k = 1; k < no_mem_stream ; ++k){
+                            prefetch[MSU][k] = addr + k +1;
+                           //printf("%d",prefetch[MSU][k]);
+                        }
+                        prefetch_LRU_update(MSU);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+    int findMsu(int i) const{
+        //printf("in findMSU");
+        for(int j = 0; j < no_of_stream; j++){
+            if( i == prefetch_LRU[j]){
+                return j;
+            }
+        }
+        return -1;
+    }
+
+
+    bool ismiss_prefetch(uint32_t addr, Cache*MainMemory){
+                for(int k = 0; k < no_of_stream; ++k){
+                    if(prefetch_LRU[k] == (no_of_stream - 1)){
+                            prefetch_LRU_update(k);
+                        for(int x = 0; x < no_mem_stream ; ++x){
+                            prefetch[k][x] = addr + x +1;
+                            MainMemory->main_traf++;
+                            prefetches++;
+                        }
+                    return false;
+                    }
+                }
+            }
+
+    bool update_prefetcher(uint32_t addr, bool hit, Cache*MainMemory){
+        bool placed = false;
+            placed = ishit_prefetch(addr,MainMemory);
+            //printf(" in update pre ");
+            if(!hit && !placed){
+                return ismiss_prefetch(addr,MainMemory);
+            }
+            return placed;
+        } 
+
+    void prefetch_LRU_update(int i){
+        for (int j = 0; j < no_of_stream; j++) {
+            if(prefetch_LRU[j] < prefetch_LRU[i]){
+                prefetch_LRU[j]++;
+                //printf(" %x %x ",prefetch_LRU[j],prefetch_LRU[i]);
+                //printf(" lru ++");
+            }   
+        }
+        prefetch_LRU[i] = 0;
+    }
+
+    
+};
+
+    void printMeasurements(Cache* L1,Cache* L2,Cache* MM) {
+        //double L2_missrate;
+        //double L1_missrate =(L1->read_misses+L1->write_misses)/(L1->read+L1->write);
+    printf("\n");
+    printf("===== Measurements =====\n");
+    printf("a. L1 reads:                   %d\n", L1->read);
+    printf("b. L1 read misses:             %d\n", L1->read_misses);
+    printf("c. L1 writes:                  %d\n", L1->write);
+    printf("d. L1 write misses:            %d\n", L1->write_misses);
+    printf("e. L1 miss rate:               %.4f\n",(float)(L1->read_misses + L1->write_misses)/(L1->read + L1->write));
+    printf("f. L1 writebacks:              %d\n", L1->write_back);
+    printf("g. L1 prefetches:              %d\n", L1->prefetches);
+    if(L2){
+        //L2_missrate = (L2->read_misses/L2->read);
+    printf("h. L2 reads (demand):          %d\n", L2->read);
+    printf("i. L2 read misses (demand):    %d\n", L2->read_misses);
+    printf("j. L2 reads (prefetch):        %d\n", 0);
+    printf("k. L2 read misses (prefetch):  %d\n", 0);
+    printf("l. L2 writes:                  %d\n", L2->write);
+    printf("m. L2 write misses:            %d\n", L2->write_misses);
+    printf("n. L2 miss rate:               %.4f\n",(float)(L2->read_misses)/(L2->read));
+    printf("o. L2 writebacks:              %d\n", L2->write_back);
+    printf("p. L2 prefetches:              %d\n", L2->prefetches);}
+    else{
+    printf("h. L2 reads (demand):          %d\n", 0);
+    printf("i. L2 read misses (demand):    %d\n", 0);
+    printf("j. L2 reads (prefetch):        %d\n", 0);
+    printf("k. L2 read misses (prefetch):  %d\n", 0);
+    printf("l. L2 writes:                  %d\n", 0);
+    printf("m. L2 write misses:            %d\n", 0);
+    printf("n. L2 miss rate:               %.4f\n",0.000);
+    printf("o. L2 writebacks:              %d\n", 0);
+    printf("p. L2 prefetches:              %d\n", 0);
+    }
+    printf("q. memory traffic:             %d\n", MM->main_traf);
+}
+
+
+
+class L1Cache : public Cache {
+public:
+    L1Cache(int r, int c, int b, int n, int m) : Cache(r, c, b, n, m) {}
+
+
         
 };
 
@@ -409,7 +441,7 @@ public:
 class L2Cache : public Cache {
 public:
     L2Cache(int r, int c, int b, int n, int m) : Cache(r, c, b, n,m) {}
-
+        
 
 
 };
@@ -490,10 +522,10 @@ int main (int argc, char *argv[]) {
 
     no_mem_stream = params.PREF_M;
     no_of_stream = params.PREF_N;
-    
     L1Cache L1(L1_no_sets,l1_col,blocksize, no_of_stream, no_mem_stream);
     MainMemory MM(1,1,blocksize,no_of_stream,no_mem_stream);
     if(l2_col > 0 && params.L2_SIZE > 0){
+    L1Cache L1(L1_no_sets,l1_col,blocksize, 0, 0);
     L2_no_sets=params.L2_SIZE/((params.L2_ASSOC)*(params.BLOCKSIZE));
     L2Cache L2(L2_no_sets,l2_col,blocksize,no_of_stream,no_mem_stream);   
 
